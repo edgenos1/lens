@@ -2,7 +2,7 @@ import { t, Trans } from "@lingui/macro";
 import { remote, shell } from "electron";
 import fse from "fs-extra";
 import { map, omit } from "lodash";
-import { computed, observable, reaction } from "mobx";
+import { computed, observable, ObservableMap, reaction } from "mobx";
 import { disposeOnUnmount, observer } from "mobx-react";
 import os from "os";
 import path from "path";
@@ -39,29 +39,23 @@ interface InstallRequestValidated extends InstallRequestPreloaded {
   tempFile: string; // temp system path to packed extension for unpacking
 }
 
-type ExtensionState = "uninstalling";
-
-interface Props {}
-interface State {
-  extensionState: {
-    [lensExtensionId: string]: {
-      displayName: string;
-      state: ExtensionState
-    }
-  };
+interface ExtensionState {
+  displayName: string;
+  // Possible states the extension can be
+  state: "uninstalling";
 }
 
 /**
  * Extensions that were removed from extensions but are still in "uninstalling" state
  */
-function getRemovedUninstalling(extensions: InstalledExtension[], extensionState: State["extensionState"]) {
-  return Object.entries(extensionState).filter(([id, extensionState]) => 
-    extensionState.state === "uninstalling" && !extensions.find(extension => extension.id === id)
+function getRemovedUninstalling(extensions: InstalledExtension[], extensionState: ObservableMap<string, ExtensionState>) {
+  return Array.from(extensionState.entries()).filter(([id, extension]) => 
+    extension.state === "uninstalling" && !extensions.find(extension => extension.id === id)
   ).map(([id, extension]) => ({ ...extension, id }));
 }
 
 @observer
-export class Extensions extends React.Component<Props, State> {
+export class Extensions extends React.Component {
   private supportedFormats = [".tar", ".tgz"];
 
   private installPathValidator: InputValidator = {
@@ -71,9 +65,8 @@ export class Extensions extends React.Component<Props, State> {
     }
   };
 
-  state = {
-    extensionState: {}
-  } as State;
+  @observable
+  extensionState = observable.map<string, ExtensionState>();
 
   @observable search = "";
   @observable installPath = "";
@@ -81,7 +74,7 @@ export class Extensions extends React.Component<Props, State> {
   componentDidMount() {
     disposeOnUnmount(this,
       reaction(() => this.extensions, (extensions) => {
-        const removedUninstalling = getRemovedUninstalling(extensions, this.state.extensionState);
+        const removedUninstalling = getRemovedUninstalling(extensions, this.extensionState);
 
         removedUninstalling.forEach(({ displayName }) => {
           Notifications.ok(
@@ -89,10 +82,9 @@ export class Extensions extends React.Component<Props, State> {
           );
         });
 
-        this.setState(state => ({
-          ...state,
-          extensionState: omit(state.extensionState, map(removedUninstalling, "id"))
-        }));
+        removedUninstalling.forEach(({ id }) => {
+          this.extensionState.delete(id);
+        });
       })
     );
   }
@@ -326,16 +318,10 @@ export class Extensions extends React.Component<Props, State> {
     const displayName = extensionDisplayName(extension.manifest.name, extension.manifest.version);
 
     try {
-      this.setState(state => ({
-        ...state,
-        extensionState: {
-          ...state.extensionState,
-          [extension.id]: {
-            state: "uninstalling",
-            displayName
-          }
-        }
-      }));
+      this.extensionState.set(extension.id, {
+        state: "uninstalling",
+        displayName
+      });
 
       await extensionDiscovery.uninstallExtension(extension.absolutePath);
     } catch (error) {
@@ -343,10 +329,7 @@ export class Extensions extends React.Component<Props, State> {
         <p>Uninstalling extension <b>{displayName}</b> has failed: <em>{error?.message ?? ""}</em></p>
       );
       // Remove uninstall state on uninstall failure
-      this.setState(state => ({
-        ...state,
-        extensionState: omit(state.extensionState, extension.id)
-      }));
+      this.extensionState.delete(extension.id);
     }
   }
 
@@ -368,7 +351,7 @@ export class Extensions extends React.Component<Props, State> {
     return extensions.map(ext => {
       const { id, isEnabled, manifest } = ext;
       const { name, description } = manifest;
-      const isUninstalling = this.state.extensionState[id]?.state === "uninstalling";
+      const isUninstalling = this.extensionState.get(id)?.state === "uninstalling";
 
       return (
         <div key={id} className="extension flex gaps align-center">
