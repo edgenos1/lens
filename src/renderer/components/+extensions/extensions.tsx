@@ -54,10 +54,11 @@ interface State {
 /**
  * Extensions that were removed from extensions but are still in "uninstalling" state
  */
-const getRemovedUninstalling = (extensions: InstalledExtension[], extensionState: State["extensionState"]) => 
-  Object.entries(extensionState).filter(([id, extensionState]) => 
+function getRemovedUninstalling(extensions: InstalledExtension[], extensionState: State["extensionState"]) {
+  return Object.entries(extensionState).filter(([id, extensionState]) => 
     extensionState.state === "uninstalling" && !extensions.find(extension => extension.id === id)
   ).map(([id, extension]) => ({ ...extension, id }));
+}
 
 @observer
 export class Extensions extends React.Component<Props, State> {
